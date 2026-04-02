@@ -94,17 +94,61 @@ export default function App() {
   }, [targetBpm, genre, fetchTracks, source]);
 
   const handleNextTrack = useCallback(() => {
-    const currentList = source === 'jamendo' ? tracks : localTracks;
-    if (currentTrackIndex < currentList.length - 1) {
-      setCurrentTrackIndex(prev => prev + 1);
-    } else {
-      if (source === 'jamendo') {
-        fetchTracks(targetBpm, genre).then(() => setCurrentTrackIndex(0));
+    if (source === 'jamendo') {
+      if (currentTrackIndex < tracks.length - 1) {
+        setCurrentTrackIndex(prev => prev + 1);
       } else {
-        setCurrentTrackIndex(0); // Loop local tracks
+        fetchTracks(targetBpm, genre).then(() => setCurrentTrackIndex(0));
       }
+    } else {
+      // Local tracks logic: find the track with BPM closest to targetBpm
+      if (localTracks.length === 0) return;
+      
+      // Find the track with the closest BPM
+      let closestIndex = 0;
+      let minDiff = Infinity;
+      
+      localTracks.forEach((track, index) => {
+        // Don't pick the exact same track again if we have multiple tracks
+        if (index === currentTrackIndex && localTracks.length > 1) return;
+        
+        const diff = Math.abs(track.bpm - targetBpm);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIndex = index;
+        }
+      });
+      
+      setCurrentTrackIndex(closestIndex);
     }
-  }, [currentTrackIndex, tracks.length, localTracks.length, fetchTracks, targetBpm, genre, source]);
+  }, [currentTrackIndex, tracks.length, localTracks, fetchTracks, targetBpm, genre, source]);
+
+  // When targetBpm changes, we should also try to find a better matching local track
+  // if we are in local mode and not currently playing (or if we want to force a switch)
+  useEffect(() => {
+    if (source === 'local' && localTracks.length > 0) {
+       // Find the track with the closest BPM
+       let closestIndex = 0;
+       let minDiff = Infinity;
+       
+       localTracks.forEach((track, index) => {
+         const diff = Math.abs(track.bpm - targetBpm);
+         if (diff < minDiff) {
+           minDiff = diff;
+           closestIndex = index;
+         }
+       });
+       
+       // Only switch if the new track is a significantly better match
+       // or if we are just starting out
+       const currentTrackBpm = localTracks[currentTrackIndex]?.bpm || 0;
+       const currentDiff = Math.abs(currentTrackBpm - targetBpm);
+       
+       if (minDiff < currentDiff - 5 || currentTrackBpm === 0) {
+         setCurrentTrackIndex(closestIndex);
+       }
+    }
+  }, [targetBpm, source, localTracks]);
 
   const handleLocalFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);

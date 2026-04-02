@@ -1,5 +1,5 @@
 {
-  "name": "",
-  "description": "",
+  "name": "Pulse Player",
+  "description": "The player selects the next track based on BPM of the current heart rate or step tempo.",
   "requestFramePermissions": []
 }
