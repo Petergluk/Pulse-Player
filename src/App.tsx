@@ -26,6 +26,13 @@ export default function App() {
   const [maxHrThreshold, setMaxHrThreshold] = useState(180);
   const [cooldownDuration, setCooldownDuration] = useState(60); // seconds
   
+  const [crossfadeDuration, setCrossfadeDuration] = useState<number>(() => Number(localStorage.getItem('pulseplayer_crossfade') ?? 3));
+  const [bpmWindowSize, setBpmWindowSize] = useState<number>(() => Number(localStorage.getItem('pulseplayer_window') ?? 60));
+  const [playToEnd, setPlayToEnd] = useState<boolean>(() => localStorage.getItem('pulseplayer_playtoend') === 'true');
+  
+  const bpmHistoryRef = useRef<{time: number, bpm: number}[]>([]);
+  const [appliedBpm, setAppliedBpm] = useState(120);
+  
   // Cooldown State
   const [isCooldown, setIsCooldown] = useState(false);
   const [cooldownStartBpm, setCooldownStartBpm] = useState<number | null>(null);
@@ -39,10 +46,13 @@ export default function App() {
   const currentList = source === 'jamendo' ? tracks : localTracks;
   const currentTrack = currentList[currentTrackIndex] || null;
 
-  // Persist Jamendo settings
+  // Persist settings
   useEffect(() => {
     localStorage.setItem('pulseplayer_genre', genre);
-  }, [genre]);
+    localStorage.setItem('pulseplayer_crossfade', String(crossfadeDuration));
+    localStorage.setItem('pulseplayer_window', String(bpmWindowSize));
+    localStorage.setItem('pulseplayer_playtoend', String(playToEnd));
+  }, [genre, crossfadeDuration, bpmWindowSize, playToEnd]);
 
   // Handle Mode Changes
   useEffect(() => {
@@ -86,33 +96,72 @@ export default function App() {
     }
   }, [hr, maxHrThreshold, mode, isCooldown]);
 
-  // Fetch tracks when target BPM changes significantly
+  // Smooth BPM over time window
   useEffect(() => {
-    if (source === 'jamendo') {
-      fetchTracks(targetBpm, genre).then(() => setCurrentTrackIndex(0));
-    }
-  }, [targetBpm, genre, fetchTracks, source]);
+    const interval = setInterval(() => {
+      const now = Date.now();
+      bpmHistoryRef.current.push({ time: now, bpm: targetBpm });
+      
+      const cutoff = now - (bpmWindowSize * 1000);
+      bpmHistoryRef.current = bpmHistoryRef.current.filter(entry => entry.time >= cutoff);
+      
+      if (bpmHistoryRef.current.length > 0) {
+        const sum = bpmHistoryRef.current.reduce((acc, curr) => acc + curr.bpm, 0);
+        const avg = Math.round(sum / bpmHistoryRef.current.length);
+        
+        if (Math.abs(avg - appliedBpm) >= 5) {
+          setAppliedBpm(avg);
+        }
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [targetBpm, bpmWindowSize, appliedBpm]);
 
-  const handleNextTrack = useCallback(() => {
+  // Fetch tracks when applied BPM changes significantly
+  useEffect(() => {
+    if (playToEnd) return; // Wait for track to end naturally
+    
+    if (source === 'jamendo') {
+      fetchTracks(appliedBpm, genre).then(() => setCurrentTrackIndex(0));
+    } else {
+      if (localTracks.length === 0) return;
+      let closestIndex = 0;
+      let minDiff = Infinity;
+      localTracks.forEach((track, index) => {
+        const diff = Math.abs(track.bpm - appliedBpm);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIndex = index;
+        }
+      });
+      setCurrentTrackIndex(closestIndex);
+    }
+  }, [appliedBpm, playToEnd, source, genre, localTracks, fetchTracks]);
+
+  const handleNextTrack = useCallback((manual = false) => {
+    if (manual) {
+      setAppliedBpm(targetBpm);
+      bpmHistoryRef.current = [];
+    }
+    
+    const bpmToUse = manual ? targetBpm : appliedBpm;
+
     if (source === 'jamendo') {
       if (currentTrackIndex < tracks.length - 1) {
         setCurrentTrackIndex(prev => prev + 1);
       } else {
-        fetchTracks(targetBpm, genre).then(() => setCurrentTrackIndex(0));
+        fetchTracks(bpmToUse, genre).then(() => setCurrentTrackIndex(0));
       }
     } else {
-      // Local tracks logic: find the track with BPM closest to targetBpm
+      // Local tracks logic: find the track with BPM closest to bpmToUse
       if (localTracks.length === 0) return;
       
-      // Find the track with the closest BPM
       let closestIndex = 0;
       let minDiff = Infinity;
       
       localTracks.forEach((track, index) => {
-        // Don't pick the exact same track again if we have multiple tracks
         if (index === currentTrackIndex && localTracks.length > 1) return;
-        
-        const diff = Math.abs(track.bpm - targetBpm);
+        const diff = Math.abs(track.bpm - bpmToUse);
         if (diff < minDiff) {
           minDiff = diff;
           closestIndex = index;
@@ -121,34 +170,7 @@ export default function App() {
       
       setCurrentTrackIndex(closestIndex);
     }
-  }, [currentTrackIndex, tracks.length, localTracks, fetchTracks, targetBpm, genre, source]);
-
-  // When targetBpm changes, we should also try to find a better matching local track
-  // if we are in local mode and not currently playing (or if we want to force a switch)
-  useEffect(() => {
-    if (source === 'local' && localTracks.length > 0) {
-       // Find the track with the closest BPM
-       let closestIndex = 0;
-       let minDiff = Infinity;
-       
-       localTracks.forEach((track, index) => {
-         const diff = Math.abs(track.bpm - targetBpm);
-         if (diff < minDiff) {
-           minDiff = diff;
-           closestIndex = index;
-         }
-       });
-       
-       // Only switch if the new track is a significantly better match
-       // or if we are just starting out
-       const currentTrackBpm = localTracks[currentTrackIndex]?.bpm || 0;
-       const currentDiff = Math.abs(currentTrackBpm - targetBpm);
-       
-       if (minDiff < currentDiff - 5 || currentTrackBpm === 0) {
-         setCurrentTrackIndex(closestIndex);
-       }
-    }
-  }, [targetBpm, source, localTracks]);
+  }, [currentTrackIndex, tracks.length, localTracks, fetchTracks, targetBpm, appliedBpm, genre, source]);
 
   const handleLocalFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -312,7 +334,7 @@ export default function App() {
 
       {/* Player */}
       <div className="shrink-0">
-        <Player currentTrack={currentTrack} onNextTrack={handleNextTrack} />
+        <Player currentTrack={currentTrack} onNextTrack={handleNextTrack} crossfadeDuration={crossfadeDuration} />
       </div>
 
       {/* Settings Modal Overlay */}
@@ -373,6 +395,49 @@ export default function App() {
                 // @ts-ignore
                 webkitdirectory=""
                 directory=""
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                Длительность кроссфейда (сек)
+              </label>
+              <input 
+                type="range" 
+                min="0" max="10" step="1"
+                value={crossfadeDuration}
+                onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
+                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+              <div className="text-right mt-2 font-mono text-xl">{crossfadeDuration}</div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                Окно усреднения темпа (сек)
+              </label>
+              <input 
+                type="range" 
+                min="10" max="120" step="10"
+                value={bpmWindowSize}
+                onChange={(e) => setBpmWindowSize(Number(e.target.value))}
+                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+              <div className="text-right mt-2 font-mono text-xl">{bpmWindowSize}</div>
+              <p className="text-xs text-gray-500 mt-2">
+                Приложение будет менять трек только если ваш темп стабильно держится на новом уровне в течение этого времени.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between bg-gray-800 p-4 rounded-xl">
+              <label className="text-sm font-medium text-white">
+                Слушать трек до конца
+              </label>
+              <input 
+                type="checkbox" 
+                checked={playToEnd}
+                onChange={(e) => setPlayToEnd(e.target.checked)}
+                className="w-5 h-5 accent-blue-500"
               />
             </div>
 

@@ -5,51 +5,135 @@ import { motion } from 'motion/react';
 
 interface PlayerProps {
   currentTrack: Track | null;
-  onNextTrack: () => void;
+  onNextTrack: (manual?: boolean) => void;
+  crossfadeDuration?: number;
 }
 
-export function Player({ currentTrack, onNextTrack }: PlayerProps) {
+export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: PlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  const audio1Ref = useRef<HTMLAudioElement | null>(null);
+  const audio2Ref = useRef<HTMLAudioElement | null>(null);
+  const [activePlayer, setActivePlayer] = useState<1 | 2>(1);
+  const [track1, setTrack1] = useState<Track | null>(currentTrack);
+  const [track2, setTrack2] = useState<Track | null>(null);
+  
+  const isTransitioningRef = useRef(false);
+  const fadeIntervalRef = useRef<any>(null);
 
+  // Handle track changes and crossfading
   useEffect(() => {
-    if (currentTrack && audioRef.current) {
-      audioRef.current.src = currentTrack.audio;
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    if (!currentTrack) return;
+    
+    // Reset transition flag when a new track arrives
+    isTransitioningRef.current = false;
+    
+    // Determine which player is next
+    const isPlayer1Active = activePlayer === 1;
+    // If the current track is already loaded in the active player, do nothing (initial load)
+    if (isPlayer1Active && track1?.id === currentTrack.id) return;
+    if (!isPlayer1Active && track2?.id === currentTrack.id) return;
+
+    const prevAudio = isPlayer1Active ? audio1Ref.current : audio2Ref.current;
+    const nextAudio = isPlayer1Active ? audio2Ref.current : audio1Ref.current;
+    const nextPlayer = isPlayer1Active ? 2 : 1;
+    
+    if (nextPlayer === 1) setTrack1(currentTrack);
+    else setTrack2(currentTrack);
+    
+    if (nextAudio) {
+      nextAudio.src = currentTrack.audio;
+      // If we are crossfading and currently playing, start next audio at volume 0
+      const shouldCrossfade = crossfadeDuration > 0 && isPlaying && prevAudio && !prevAudio.paused;
+      nextAudio.volume = shouldCrossfade ? 0 : 1;
+      
+      nextAudio.play().then(() => {
+        setIsPlaying(true);
+        setActivePlayer(nextPlayer);
+        
+        if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
+        
+        if (shouldCrossfade && prevAudio) {
+          const stepMs = 50;
+          const fadeAmount = stepMs / (crossfadeDuration * 1000);
+          
+          fadeIntervalRef.current = setInterval(() => {
+            let done = false;
+            
+            // Fade out previous
+            if (prevAudio.volume - fadeAmount > 0) {
+              prevAudio.volume -= fadeAmount;
+            } else {
+              prevAudio.volume = 0;
+              prevAudio.pause();
+              done = true;
+            }
+            
+            // Fade in next
+            if (nextAudio.volume + fadeAmount < 1) {
+              nextAudio.volume += fadeAmount;
+            } else {
+              nextAudio.volume = 1;
+            }
+            
+            if (done) clearInterval(fadeIntervalRef.current);
+          }, stepMs);
+        } else if (prevAudio) {
+          prevAudio.pause();
+          prevAudio.volume = 1;
+        }
+      }).catch((e) => {
+        console.error("Playback failed:", e);
+        setIsPlaying(false);
+      });
     }
-  }, [currentTrack]);
+  }, [currentTrack, crossfadeDuration]); // Intentionally omitting activePlayer/track1/track2 to avoid loops
 
+  // Handle time updates and automatic crossfade trigger
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const activeAudio = activePlayer === 1 ? audio1Ref.current : audio2Ref.current;
+    if (!activeAudio) return;
 
     const updateProgress = () => {
-      setProgress((audio.currentTime / audio.duration) * 100 || 0);
+      setProgress((activeAudio.currentTime / activeAudio.duration) * 100 || 0);
+      
+      // Trigger crossfade before the track ends
+      if (crossfadeDuration > 0 && activeAudio.duration > 0) {
+        const timeRemaining = activeAudio.duration - activeAudio.currentTime;
+        if (timeRemaining <= crossfadeDuration && !isTransitioningRef.current) {
+          isTransitioningRef.current = true;
+          onNextTrack(false);
+        }
+      }
     };
 
     const handleEnded = () => {
-      setIsPlaying(false);
-      onNextTrack();
+      if (!isTransitioningRef.current) {
+        isTransitioningRef.current = true;
+        onNextTrack(false);
+      }
     };
 
-    audio.addEventListener('timeupdate', updateProgress);
-    audio.addEventListener('ended', handleEnded);
+    activeAudio.addEventListener('timeupdate', updateProgress);
+    activeAudio.addEventListener('ended', handleEnded);
 
     return () => {
-      audio.removeEventListener('timeupdate', updateProgress);
-      audio.removeEventListener('ended', handleEnded);
+      activeAudio.removeEventListener('timeupdate', updateProgress);
+      activeAudio.removeEventListener('ended', handleEnded);
     };
-  }, [onNextTrack]);
+  }, [activePlayer, onNextTrack, crossfadeDuration]);
 
   const togglePlay = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!audioRef.current || !currentTrack) return;
+    const activeAudio = activePlayer === 1 ? audio1Ref.current : audio2Ref.current;
+    if (!activeAudio || !currentTrack) return;
+    
     if (isPlaying) {
-      audioRef.current.pause();
+      activeAudio.pause();
     } else {
-      audioRef.current.play();
+      activeAudio.play();
     }
     setIsPlaying(!isPlaying);
   };
@@ -76,7 +160,8 @@ export function Player({ currentTrack, onNextTrack }: PlayerProps) {
         dragElastic={0.2}
         onDragEnd={handleDragEnd}
       >
-        <audio ref={audioRef} />
+        <audio ref={audio1Ref} />
+        <audio ref={audio2Ref} />
 
         {/* Drag Handle & Compact View Area */}
         <div 
@@ -186,7 +271,7 @@ export function Player({ currentTrack, onNextTrack }: PlayerProps) {
             </button>
             
             <button 
-              onClick={onNextTrack}
+              onClick={() => onNextTrack(true)}
               disabled={!currentTrack}
               className="p-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
             >
