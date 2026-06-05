@@ -27,7 +27,7 @@ export function BpmScanner({ onClose }: { onClose: () => void }) {
   };
 
   const processFilesFallback = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
     
     setIsProcessing(true);
@@ -58,7 +58,7 @@ export function BpmScanner({ onClose }: { onClose: () => void }) {
           const writer = new ID3Writer(arrayBuffer);
           writer.setFrame('TBPM', roundedBpm);
           writer.addTag();
-          const taggedBuffer = writer.arrayBuffer;
+          const taggedBuffer = (writer as any).arrayBuffer;
 
           // 3. Download the modified file
           const blob = new Blob([taggedBuffer], { type: 'audio/mpeg' });
@@ -138,7 +138,7 @@ export function BpmScanner({ onClose }: { onClose: () => void }) {
             const writer = new ID3Writer(arrayBuffer);
             writer.setFrame('TBPM', roundedBpm);
             writer.addTag();
-            const taggedBuffer = writer.arrayBuffer;
+            const taggedBuffer = (writer as any).arrayBuffer;
 
             // 3. Save back to file
             try {

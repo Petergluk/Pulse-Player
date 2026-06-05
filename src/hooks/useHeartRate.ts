@@ -7,14 +7,14 @@ export function useHeartRate() {
   const [isConnected, setIsConnected] = useState(false);
 
   const connect = useCallback(async () => {
-    if (!navigator.bluetooth) {
+    if (!(navigator as any).bluetooth) {
       setError('Web Bluetooth не поддерживается в этом браузере. Используйте Chrome на Android, Windows или macOS.');
       return;
     }
     setIsConnecting(true);
     setError(null);
     try {
-      const device = await navigator.bluetooth.requestDevice({
+      const device = await (navigator as any).bluetooth.requestDevice({
         filters: [{ services: ['heart_rate'] }],
       });
       const server = await device.gatt?.connect();

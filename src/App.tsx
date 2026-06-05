@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Settings as SettingsIcon, Activity, Footprints, Music, AlertCircle, FolderOpen } from 'lucide-react';
 import { useHeartRate } from './hooks/useHeartRate';
 import { usePedometer } from './hooks/usePedometer';
@@ -70,6 +70,17 @@ export default function App() {
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
   const currentList = source === 'jamendo' ? tracks : localTracks;
   const currentTrack = currentList[currentTrackIndex] || null;
+
+  // Cleanup local URLs on unmount
+  useEffect(() => {
+    return () => {
+      localTracks.forEach(track => {
+        if (track.audio.startsWith('blob:')) {
+          URL.revokeObjectURL(track.audio);
+        }
+      });
+    };
+  }, [localTracks]);
 
   // Persist settings
   useEffect(() => {
@@ -237,8 +248,15 @@ export default function App() {
   }, [currentTrackIndex, tracks.length, localTracks, fetchTracks, targetBpm, appliedBpm, genre, source]);
 
   const handleLocalFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
+
+    // Сначала очищаем старые blob URLs (для предотвращения утечек памяти)
+    localTracks.forEach(track => {
+      if (track.audio.startsWith('blob:')) {
+        URL.revokeObjectURL(track.audio);
+      }
+    });
 
     const newTracks: Track[] = files.filter(f => f.type.startsWith('audio/')).map((file, index) => {
       let bpm = 120;

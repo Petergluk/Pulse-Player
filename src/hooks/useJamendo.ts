@@ -36,7 +36,7 @@ export function useJamendo() {
       // Округляем BPM до ближайшего кратного 5 (например, 122 -> 120, 123 -> 125)
       // В Jamendo авторы обычно тегируют треки круглыми числами (120bpm, 125bpm и т.д.)
       const roundedBpm = Math.round(targetBpm / 5) * 5;
-      const clientId = import.meta.env.VITE_JAMENDO_CLIENT_ID || '4399f0de';
+      const clientId = (import.meta as any).env.VITE_JAMENDO_CLIENT_ID || '4399f0de';
       
       let url = `https://api.jamendo.com/v3.0/tracks/?client_id=${clientId}&format=json&limit=15&tags=${roundedBpm}bpm&include=musicinfo&audioformat=mp32`;
       
