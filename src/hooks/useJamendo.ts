@@ -77,25 +77,26 @@ export function useJamendo() {
         }
       }
       
-      // Если API не вернул треков или произошла ошибка, используем фоллбэк (демо-библиотеку)
-      console.warn(`Jamendo API не нашел треков для тега ${roundedBpm}bpm и жанра ${genre}. Используем встроенную библиотеку.`);
-      const minBpm = targetBpm - 15;
-      const maxBpm = targetBpm + 15;
+      throw new Error("No tracks found from API");
+    } catch (err: any) {
+      console.warn(`Jamendo API недоступен или не нашел треков. Используем встроенную библиотеку.`);
       
-      const matchedTracks = MOCK_LIBRARY.filter(t => t.bpm >= minBpm && t.bpm <= maxBpm)
+      const minBpm = targetBpm - 20;
+      const maxBpm = targetBpm + 20;
+      
+      let matchedTracks = MOCK_LIBRARY.filter(t => t.bpm >= minBpm && t.bpm <= maxBpm)
         .sort((a, b) => Math.abs(a.bpm - targetBpm) - Math.abs(b.bpm - targetBpm));
       
-      if (matchedTracks.length > 0) {
-        setTracks(matchedTracks);
-        return matchedTracks;
-      } else {
-        setError(`Треки для BPM ${targetBpm} не найдены`);
-        setTracks([]);
-        return [];
+      // Если в заданном диапазоне ничего нет, просто берем ближайшие по BPM
+      if (matchedTracks.length === 0) {
+        matchedTracks = [...MOCK_LIBRARY]
+          .sort((a, b) => Math.abs(a.bpm - targetBpm) - Math.abs(b.bpm - targetBpm))
+          .slice(0, 5);
       }
-    } catch (err: any) {
-      setError(err.message);
-      return [];
+      
+      setTracks(matchedTracks);
+      setError(null); // Очищаем ошибку, чтобы UI не показывал "0 треков"
+      return matchedTracks;
     } finally {
       setIsLoading(false);
     }

@@ -5,24 +5,37 @@ import { usePedometer } from './hooks/usePedometer';
 import { useJamendo, Track } from './hooks/useJamendo';
 import { Player } from './components/Player';
 import { BpmDisplay } from './components/BpmDisplay';
+import { BpmScanner } from './components/BpmScanner';
 
 type Mode = 'fixed' | 'hr' | 'steps';
 type Source = 'jamendo' | 'local';
+
+const ALL_GENRES = ['any', 'pop', 'rock', 'electronic', 'hiphop', 'jazz', 'indie', 'filmscore', 'classical', 'chillout', 'ambient', 'folk', 'metal', 'latin', 'rnb', 'reggae', 'punk', 'country', 'house', 'blues'];
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('fixed');
   const [source, setSource] = useState<Source>('jamendo');
   const [localTracks, setLocalTracks] = useState<Track[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showScanner, setShowScanner] = useState(false);
   
   const [fixedBpm, setFixedBpm] = useState(120);
   const [targetBpm, setTargetBpm] = useState(120);
   
   // Jamendo Settings
   const [genre, setGenre] = useState<string>(() => localStorage.getItem('pulseplayer_genre') || 'any');
+  const [enabledGenres, setEnabledGenres] = useState<string[]>(() => {
+    const saved = localStorage.getItem('pulseplayer_enabled_genres');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return ALL_GENRES;
+  });
 
   // Settings
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'library' | 'settings'>('settings');
+  const [cooldownEnabled, setCooldownEnabled] = useState<boolean>(() => localStorage.getItem('pulseplayer_cooldown_enabled') !== 'false');
   const [maxHrThreshold, setMaxHrThreshold] = useState(180);
   const [cooldownDuration, setCooldownDuration] = useState(60); // seconds
   
@@ -49,10 +62,12 @@ export default function App() {
   // Persist settings
   useEffect(() => {
     localStorage.setItem('pulseplayer_genre', genre);
+    localStorage.setItem('pulseplayer_enabled_genres', JSON.stringify(enabledGenres));
     localStorage.setItem('pulseplayer_crossfade', String(crossfadeDuration));
     localStorage.setItem('pulseplayer_window', String(bpmWindowSize));
     localStorage.setItem('pulseplayer_playtoend', String(playToEnd));
-  }, [genre, crossfadeDuration, bpmWindowSize, playToEnd]);
+    localStorage.setItem('pulseplayer_cooldown_enabled', String(cooldownEnabled));
+  }, [genre, enabledGenres, crossfadeDuration, bpmWindowSize, playToEnd, cooldownEnabled]);
 
   // Handle Mode Changes
   useEffect(() => {
@@ -89,12 +104,12 @@ export default function App() {
 
   // Check for Cooldown Trigger
   useEffect(() => {
-    if (mode === 'hr' && hr && hr >= maxHrThreshold && !isCooldown) {
+    if (cooldownEnabled && mode === 'hr' && hr && hr >= maxHrThreshold && !isCooldown) {
       setIsCooldown(true);
       setCooldownStartBpm(hr);
       setCooldownStartTime(Date.now());
     }
-  }, [hr, maxHrThreshold, mode, isCooldown]);
+  }, [hr, maxHrThreshold, mode, isCooldown, cooldownEnabled]);
 
   // Smooth BPM over time window
   useEffect(() => {
@@ -257,7 +272,7 @@ export default function App() {
 
         {/* Genre Selector */}
         <div className="flex overflow-x-auto gap-2 pb-2 mb-6 scrollbar-hide shrink-0" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-          {['any', 'pop', 'rock', 'electronic', 'hiphop', 'jazz', 'indie', 'filmscore', 'classical', 'chillout', 'ambient', 'folk', 'metal', 'latin', 'rnb', 'reggae', 'punk', 'country', 'house', 'blues'].map(g => (
+          {ALL_GENRES.filter(g => enabledGenres.includes(g)).map(g => (
             <button
               key={g}
               onClick={() => setGenre(g)}
@@ -291,19 +306,6 @@ export default function App() {
               Начать отслеживание шагов
             </button>
           )}
-          {mode === 'fixed' && (
-            <div className="flex items-center gap-4">
-              <button 
-                onClick={() => setFixedBpm(Math.max(60, fixedBpm - 5))}
-                className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center text-xl font-bold hover:bg-gray-700"
-              >-</button>
-              <span className="text-xl font-medium w-16 text-center">{fixedBpm}</span>
-              <button 
-                onClick={() => setFixedBpm(Math.min(200, fixedBpm + 5))}
-                className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center text-xl font-bold hover:bg-gray-700"
-              >+</button>
-            </div>
-          )}
         </div>
 
         {/* Errors */}
@@ -314,21 +316,22 @@ export default function App() {
           </div>
         )}
 
-        {/* BPM Display */}
-        <div className="flex-1 flex flex-col justify-center -mt-8">
+        {/* BPM Display & Track Count */}
+        <div className="flex-1 flex flex-col justify-center items-center min-h-[320px] py-4">
           <BpmDisplay 
             mode={mode} 
             targetBpm={targetBpm} 
             actualBpm={actualBpm} 
             isCooldown={isCooldown} 
+            onChangeBpm={setFixedBpm}
           />
-        </div>
-
-        <div className="text-center text-gray-500 text-sm mt-auto mb-8 shrink-0">
-          {source === 'jamendo' 
-            ? (isLoadingTracks ? 'Подбор треков...' : `Найдено треков: ${tracks.length}`)
-            : `Локальных треков: ${localTracks.length}`
-          }
+          
+          <div className="text-center text-gray-500 text-sm mt-12 shrink-0">
+            {source === 'jamendo' 
+              ? (isLoadingTracks ? 'Подбор треков...' : `Найдено треков: ${tracks.length}`)
+              : `Локальных треков: ${localTracks.length}`
+            }
+          </div>
         </div>
       </main>
 
@@ -340,7 +343,7 @@ export default function App() {
       {/* Settings Modal Overlay */}
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 backdrop-blur-md z-50 flex flex-col p-6 overflow-y-auto scrollbar-hide">
-          <div className="flex justify-between items-center mb-8 mt-4">
+          <div className="flex justify-between items-center mb-6 mt-4">
             <h2 className="text-2xl font-bold">Настройки</h2>
             <button 
               onClick={() => {
@@ -351,132 +354,257 @@ export default function App() {
               Готово
             </button>
           </div>
+
+          <div className="flex bg-gray-800 rounded-xl p-1 mb-6 shrink-0">
+            <button
+              onClick={() => setSettingsTab('library')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+                settingsTab === 'library' 
+                  ? 'bg-gray-700 text-white shadow-sm' 
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Библиотеки
+            </button>
+            <button
+              onClick={() => setSettingsTab('settings')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+                settingsTab === 'settings' 
+                  ? 'bg-gray-700 text-white shadow-sm' 
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Настройки
+            </button>
+          </div>
           
-          <div className="space-y-8 pb-8">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Источник музыки
-              </label>
-              <div className="flex bg-gray-800 rounded-xl p-1">
-                <button
-                  onClick={() => setSource('jamendo')}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                    source === 'jamendo' 
-                      ? 'bg-gray-700 text-white shadow-sm' 
-                      : 'text-gray-500 hover:text-gray-300'
-                  }`}
-                >
-                  Jamendo API
-                </button>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
-                    source === 'local' 
-                      ? 'bg-gray-700 text-white shadow-sm' 
-                      : 'text-gray-500 hover:text-gray-300'
-                  }`}
-                >
-                  <FolderOpen className="w-4 h-4" />
-                  Мои файлы
-                </button>
+          <div className="space-y-6 pb-8">
+            {settingsTab === 'library' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-2">
+                    Источник музыки
+                  </label>
+                  <div className="flex bg-gray-800 rounded-xl p-1">
+                    <button
+                      onClick={() => setSource('jamendo')}
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+                        source === 'jamendo' 
+                          ? 'bg-gray-700 text-white shadow-sm' 
+                          : 'text-gray-500 hover:text-gray-300'
+                      }`}
+                    >
+                      Jamendo API
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+                        source === 'local' 
+                          ? 'bg-gray-700 text-white shadow-sm' 
+                          : 'text-gray-500 hover:text-gray-300'
+                      }`}
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      Мои файлы
+                    </button>
+                  </div>
+                  {source === 'local' && localTracks.length > 0 && (
+                    <p className="text-xs text-green-400 mt-2">
+                      Загружено треков: {localTracks.length}
+                    </p>
+                  )}
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleLocalFiles} 
+                    multiple 
+                    accept="audio/*" 
+                    className="hidden" 
+                    // @ts-ignore
+                    webkitdirectory=""
+                    directory=""
+                  />
+                </div>
+
+                <div className="bg-gray-900 p-4 rounded-xl text-sm text-gray-400">
+                  <p className="mb-2"><strong className="text-white">Jamendo API:</strong></p>
+                  <p className="leading-relaxed mb-3">
+                    Jamendo использует теги, проставленные самими авторами треков. Иногда они могут быть неточными (например, автор указал 120 BPM, а реальный темп 80). 
+                    Для более точного контроля используйте свои локальные файлы.
+                  </p>
+                  
+                  <div className="mt-4 mb-4">
+                    <p className="text-white font-medium mb-2">Отображаемые жанры:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {ALL_GENRES.map(g => (
+                        <button
+                          key={g}
+                          onClick={() => {
+                            setEnabledGenres(prev => {
+                              // Prevent disabling the last genre
+                              if (prev.includes(g) && prev.length === 1) return prev;
+                              
+                              const newGenres = prev.includes(g) 
+                                ? prev.filter(item => item !== g)
+                                : [...prev, g];
+                                
+                              // If we just disabled the currently selected genre, switch to the first available
+                              if (prev.includes(g) && genre === g && newGenres.length > 0) {
+                                setGenre(newGenres[0]);
+                              }
+                              
+                              return newGenres;
+                            });
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            enabledGenres.includes(g)
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-800 text-gray-500 hover:bg-gray-700'
+                          }`}
+                        >
+                          {g === 'any' ? 'Любой' : g.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <p className="mb-2"><strong className="text-white">Локальные файлы:</strong></p>
+                  <p className="leading-relaxed">
+                    Вы можете загрузить свои MP3 файлы. Приложение попытается найти BPM в названии файла (например, "Track_120bpm.mp3") или в ID3 тегах.
+                  </p>
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    onClick={() => {
+                      setShowSettings(false);
+                      setShowScanner(true);
+                    }}
+                    className="w-full py-3 bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Activity className="w-5 h-5" />
+                    Сканер BPM для локальных файлов
+                  </button>
+                </div>
               </div>
-              {source === 'local' && localTracks.length > 0 && (
-                <p className="text-xs text-green-400 mt-2">
-                  Загружено треков: {localTracks.length}
-                </p>
-              )}
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleLocalFiles} 
-                multiple 
-                accept="audio/*" 
-                className="hidden" 
-                // @ts-ignore
-                webkitdirectory=""
-                directory=""
-              />
-            </div>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Длительность кроссфейда (сек)
-              </label>
-              <input 
-                type="range" 
-                min="0" max="10" step="1"
-                value={crossfadeDuration}
-                onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
-                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-              />
-              <div className="text-right mt-2 font-mono text-xl">{crossfadeDuration}</div>
-            </div>
+            {settingsTab === 'settings' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-sm font-medium text-gray-300">Длительность кроссфейда</label>
+                    <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300">{crossfadeDuration} сек</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setCrossfadeDuration(Math.max(0, crossfadeDuration - 1))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                    <input 
+                      type="range" min="0" max="10" step="1"
+                      value={crossfadeDuration}
+                      onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
+                      className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                    <button onClick={() => setCrossfadeDuration(Math.min(10, crossfadeDuration + 1))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                  </div>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Окно усреднения темпа (сек)
-              </label>
-              <input 
-                type="range" 
-                min="10" max="120" step="10"
-                value={bpmWindowSize}
-                onChange={(e) => setBpmWindowSize(Number(e.target.value))}
-                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-              />
-              <div className="text-right mt-2 font-mono text-xl">{bpmWindowSize}</div>
-              <p className="text-xs text-gray-500 mt-2">
-                Приложение будет менять трек только если ваш темп стабильно держится на новом уровне в течение этого времени.
-              </p>
-            </div>
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-sm font-medium text-gray-300">Окно усреднения темпа</label>
+                    <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300">{bpmWindowSize} сек</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setBpmWindowSize(Math.max(10, bpmWindowSize - 10))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                    <input 
+                      type="range" min="10" max="120" step="10"
+                      value={bpmWindowSize}
+                      onChange={(e) => setBpmWindowSize(Number(e.target.value))}
+                      className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                    <button onClick={() => setBpmWindowSize(Math.min(120, bpmWindowSize + 10))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                    Приложение будет менять трек только если ваш темп стабильно держится на новом уровне в течение этого времени.
+                  </p>
+                </div>
 
-            <div className="flex items-center justify-between bg-gray-800 p-4 rounded-xl">
-              <label className="text-sm font-medium text-white">
-                Слушать трек до конца
-              </label>
-              <input 
-                type="checkbox" 
-                checked={playToEnd}
-                onChange={(e) => setPlayToEnd(e.target.checked)}
-                className="w-5 h-5 accent-blue-500"
-              />
-            </div>
+                <div className="flex items-center justify-between bg-gray-800 p-3 rounded-xl">
+                  <label className="text-sm font-medium text-white">
+                    Слушать трек до конца
+                  </label>
+                  <input 
+                    type="checkbox" 
+                    checked={playToEnd}
+                    onChange={(e) => setPlayToEnd(e.target.checked)}
+                    className="w-5 h-5 accent-blue-500"
+                  />
+                </div>
 
-            <hr className="border-gray-800" />
+                <hr className="border-gray-800" />
 
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Порог пульса для заминки (BPM)
-              </label>
-              <input 
-                type="range" 
-                min="140" max="220" step="5"
-                value={maxHrThreshold}
-                onChange={(e) => setMaxHrThreshold(Number(e.target.value))}
-                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-              />
-              <div className="text-right mt-2 font-mono text-xl">{maxHrThreshold}</div>
-            </div>
+                <div className="flex items-center justify-between bg-gray-800 p-3 rounded-xl">
+                  <label className="text-sm font-medium text-white">
+                    Автоматическая заминка
+                  </label>
+                  <input 
+                    type="checkbox" 
+                    checked={cooldownEnabled}
+                    onChange={(e) => setCooldownEnabled(e.target.checked)}
+                    className="w-5 h-5 accent-blue-500"
+                  />
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Длительность заминки (сек)
-              </label>
-              <input 
-                type="range" 
-                min="30" max="300" step="10"
-                value={cooldownDuration}
-                onChange={(e) => setCooldownDuration(Number(e.target.value))}
-                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-              />
-              <div className="text-right mt-2 font-mono text-xl">{cooldownDuration}</div>
-            </div>
-            
-            <div className="bg-gray-900 p-4 rounded-xl text-sm text-gray-400">
-              <p className="mb-2"><strong className="text-white">Как это работает:</strong></p>
-              <p>Если пульс превысит порог, приложение перейдет в режим заминки и будет плавно подбирать треки с более низким BPM в течение указанного времени, чтобы помочь вам восстановиться.</p>
-            </div>
+                {cooldownEnabled && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-medium text-gray-300">Порог пульса для заминки</label>
+                        <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300">{maxHrThreshold} BPM</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setMaxHrThreshold(Math.max(140, maxHrThreshold - 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                        <input 
+                          type="range" min="140" max="220" step="5"
+                          value={maxHrThreshold}
+                          onChange={(e) => setMaxHrThreshold(Number(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                        <button onClick={() => setMaxHrThreshold(Math.min(220, maxHrThreshold + 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-medium text-gray-300">Длительность заминки</label>
+                        <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300">{cooldownDuration} сек</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setCooldownDuration(Math.max(30, cooldownDuration - 10))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                        <input 
+                          type="range" min="30" max="300" step="10"
+                          value={cooldownDuration}
+                          onChange={(e) => setCooldownDuration(Number(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                        <button onClick={() => setCooldownDuration(Math.min(300, cooldownDuration + 10))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-gray-900 p-4 rounded-xl text-sm text-gray-400">
+                      <p className="mb-2"><strong className="text-white">Как это работает:</strong></p>
+                      <p className="leading-relaxed">Если пульс превысит порог, приложение перейдет в режим заминки и будет плавно подбирать треки с более низким BPM в течение указанного времени, чтобы помочь вам восстановиться.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
+      )}
+
+      {/* BPM Scanner Modal */}
+      {showScanner && (
+        <BpmScanner onClose={() => setShowScanner(false)} />
       )}
     </div>
   );

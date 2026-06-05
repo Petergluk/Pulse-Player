@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, Volume2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Play, Pause, SkipForward, Volume2, VolumeX, ChevronUp, ChevronDown } from 'lucide-react';
 import { Track } from '../hooks/useJamendo';
 import { motion } from 'motion/react';
 
@@ -12,7 +12,10 @@ interface PlayerProps {
 export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: PlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   
   const audio1Ref = useRef<HTMLAudioElement | null>(null);
   const audio2Ref = useRef<HTMLAudioElement | null>(null);
@@ -22,6 +25,31 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
   
   const isTransitioningRef = useRef(false);
   const fadeIntervalRef = useRef<any>(null);
+  const hasInteracted = useRef(false);
+
+  const formatTime = (time: number) => {
+    if (!time || isNaN(time)) return "0:00";
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    const markInteracted = () => {
+      hasInteracted.current = true;
+      window.removeEventListener('click', markInteracted);
+      window.removeEventListener('touchstart', markInteracted);
+      window.removeEventListener('keydown', markInteracted);
+    };
+    window.addEventListener('click', markInteracted);
+    window.addEventListener('touchstart', markInteracted);
+    window.addEventListener('keydown', markInteracted);
+    return () => {
+      window.removeEventListener('click', markInteracted);
+      window.removeEventListener('touchstart', markInteracted);
+      window.removeEventListener('keydown', markInteracted);
+    };
+  }, []);
 
   // Handle track changes and crossfading
   useEffect(() => {
@@ -45,6 +73,14 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
     
     if (nextAudio) {
       nextAudio.src = currentTrack.audio;
+      
+      // Prevent autoplay if user hasn't interacted yet to comply with browser policies
+      if (!hasInteracted.current) {
+        setActivePlayer(nextPlayer);
+        setIsPlaying(false);
+        return;
+      }
+
       // If we are crossfading and currently playing, start next audio at volume 0
       const shouldCrossfade = crossfadeDuration > 0 && isPlaying && prevAudio && !prevAudio.paused;
       nextAudio.volume = shouldCrossfade ? 0 : 1;
@@ -85,8 +121,14 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
           prevAudio.volume = 1;
         }
       }).catch((e) => {
+        if (e.name === 'AbortError') {
+          // Play request was interrupted by a call to pause() or a new track load.
+          // This is expected during rapid track changes or play/pause toggles.
+          return;
+        }
         console.error("Playback failed:", e);
         setIsPlaying(false);
+        setActivePlayer(nextPlayer);
       });
     }
   }, [currentTrack, crossfadeDuration]); // Intentionally omitting activePlayer/track1/track2 to avoid loops
@@ -98,6 +140,8 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
 
     const updateProgress = () => {
       setProgress((activeAudio.currentTime / activeAudio.duration) * 100 || 0);
+      setCurrentTime(activeAudio.currentTime || 0);
+      setDuration(activeAudio.duration || 0);
       
       // Trigger crossfade before the track ends
       if (crossfadeDuration > 0 && activeAudio.duration > 0) {
@@ -127,15 +171,22 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
 
   const togglePlay = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    hasInteracted.current = true;
     const activeAudio = activePlayer === 1 ? audio1Ref.current : audio2Ref.current;
     if (!activeAudio || !currentTrack) return;
     
     if (isPlaying) {
       activeAudio.pause();
+      setIsPlaying(false);
     } else {
-      activeAudio.play();
+      activeAudio.play().then(() => {
+        setIsPlaying(true);
+      }).catch(err => {
+        if (err.name === 'AbortError') return;
+        console.error("Manual playback failed:", err);
+        setIsPlaying(false);
+      });
     }
-    setIsPlaying(!isPlaying);
   };
 
   const handleDragEnd = (event: any, info: any) => {
@@ -186,13 +237,22 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
                   <h3 className="font-semibold text-sm truncate">{currentTrack.name}</h3>
                   <p className="text-gray-400 text-xs truncate">{currentTrack.artist_name}</p>
                 </div>
-                <button 
-                  onClick={togglePlay}
-                  disabled={!currentTrack}
-                  className="w-12 h-12 flex items-center justify-center bg-blue-500 hover:bg-blue-600 text-white rounded-full transition-transform active:scale-95 shrink-0"
-                >
-                  {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current ml-1" />}
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button 
+                    onClick={togglePlay}
+                    disabled={!currentTrack}
+                    className="w-12 h-12 flex items-center justify-center bg-blue-500 hover:bg-blue-600 text-white rounded-full transition-transform active:scale-95"
+                  >
+                    {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current ml-1" />}
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); onNextTrack(true); }}
+                    disabled={!currentTrack}
+                    className="w-12 h-12 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-white rounded-full transition-transform active:scale-95"
+                  >
+                    <SkipForward className="w-5 h-5 fill-current" />
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -245,17 +305,55 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
           )}
 
           {/* Progress Bar */}
-          <div className="h-1.5 bg-gray-800 rounded-full mb-5 overflow-hidden shrink-0">
-            <div 
-              className="h-full bg-blue-500 transition-all duration-100 ease-linear"
-              style={{ width: `${progress}%` }}
-            />
+          <div className="mb-5 shrink-0">
+            <div className="relative flex items-center h-6 group">
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="0.1"
+                value={progress || 0}
+                onChange={(e) => {
+                  const activeAudio = activePlayer === 1 ? audio1Ref.current : audio2Ref.current;
+                  if (activeAudio && activeAudio.duration) {
+                    const newTime = (Number(e.target.value) / 100) * activeAudio.duration;
+                    activeAudio.currentTime = newTime;
+                    setProgress(Number(e.target.value));
+                    setCurrentTime(newTime);
+                  }
+                }}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              />
+              <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-500 transition-all duration-100 ease-linear group-hover:bg-blue-400"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              {/* Thumb */}
+              <div 
+                className="absolute h-3 w-3 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform pointer-events-none"
+                style={{ left: `calc(${progress || 0}% - 6px)` }}
+              />
+            </div>
+            <div className="flex justify-between text-xs text-gray-500 font-medium px-1 mt-1">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
           </div>
 
           {/* Controls */}
           <div className="flex items-center justify-between px-4 shrink-0">
-            <button className="p-2 text-gray-400 hover:text-white transition-colors">
-              <Volume2 className="w-6 h-6" />
+            <button 
+              onClick={() => {
+                const newMuted = !isMuted;
+                setIsMuted(newMuted);
+                if (audio1Ref.current) audio1Ref.current.muted = newMuted;
+                if (audio2Ref.current) audio2Ref.current.muted = newMuted;
+              }}
+              className="p-2 text-gray-400 hover:text-white transition-colors"
+            >
+              {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
             </button>
             
             <button 
