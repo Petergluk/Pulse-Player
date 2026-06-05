@@ -34,18 +34,30 @@ export default function App() {
 
   // Settings
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'library' | 'settings'>('settings');
+  const [settingsTab, setSettingsTab] = useState<'library' | 'settings' | 'intervals'>('settings');
   const [cooldownEnabled, setCooldownEnabled] = useState<boolean>(() => localStorage.getItem('pulseplayer_cooldown_enabled') !== 'false');
   const [maxHrThreshold, setMaxHrThreshold] = useState(180);
   const [cooldownDuration, setCooldownDuration] = useState(60); // seconds
   
+  // Intervals
+  const [intervalsEnabled, setIntervalsEnabled] = useState<boolean>(() => localStorage.getItem('pulseplayer_intervals_enabled') === 'true');
+  const [intervalUpperHr, setIntervalUpperHr] = useState<number>(() => Number(localStorage.getItem('pulseplayer_intervals_upper') ?? 180));
+  const [intervalLowerHr, setIntervalLowerHr] = useState<number>(() => Number(localStorage.getItem('pulseplayer_intervals_lower') ?? 90));
+  const [intervalRunBpm, setIntervalRunBpm] = useState<number>(() => Number(localStorage.getItem('pulseplayer_intervals_run_target') ?? 160));
+  const [intervalWalkBpm, setIntervalWalkBpm] = useState<number>(() => Number(localStorage.getItem('pulseplayer_intervals_walk_target') ?? 110));
+  const [intervalPhase, setIntervalPhase] = useState<'running' | 'walking'>('running');
+  
+  const [intervalRandomize, setIntervalRandomize] = useState<boolean>(() => localStorage.getItem('pulseplayer_intervals_randomize') === 'true');
+  const [intervalVariance, setIntervalVariance] = useState<number>(() => Number(localStorage.getItem('pulseplayer_intervals_variance') ?? 20));
+  const activeIntervalBpmRef = useRef<number | null>(null);
+
   const [crossfadeDuration, setCrossfadeDuration] = useState<number>(() => Number(localStorage.getItem('pulseplayer_crossfade') ?? 3));
   const [bpmWindowSize, setBpmWindowSize] = useState<number>(() => Number(localStorage.getItem('pulseplayer_window') ?? 60));
   const [playToEnd, setPlayToEnd] = useState<boolean>(() => localStorage.getItem('pulseplayer_playtoend') === 'true');
   
   const bpmHistoryRef = useRef<{time: number, bpm: number}[]>([]);
   const [appliedBpm, setAppliedBpm] = useState(120);
-  
+
   // Cooldown State
   const [isCooldown, setIsCooldown] = useState(false);
   const [cooldownStartBpm, setCooldownStartBpm] = useState<number | null>(null);
@@ -67,7 +79,14 @@ export default function App() {
     localStorage.setItem('pulseplayer_window', String(bpmWindowSize));
     localStorage.setItem('pulseplayer_playtoend', String(playToEnd));
     localStorage.setItem('pulseplayer_cooldown_enabled', String(cooldownEnabled));
-  }, [genre, enabledGenres, crossfadeDuration, bpmWindowSize, playToEnd, cooldownEnabled]);
+    localStorage.setItem('pulseplayer_intervals_enabled', String(intervalsEnabled));
+    localStorage.setItem('pulseplayer_intervals_upper', String(intervalUpperHr));
+    localStorage.setItem('pulseplayer_intervals_lower', String(intervalLowerHr));
+    localStorage.setItem('pulseplayer_intervals_run_target', String(intervalRunBpm));
+    localStorage.setItem('pulseplayer_intervals_walk_target', String(intervalWalkBpm));
+    localStorage.setItem('pulseplayer_intervals_randomize', String(intervalRandomize));
+    localStorage.setItem('pulseplayer_intervals_variance', String(intervalVariance));
+  }, [genre, enabledGenres, crossfadeDuration, bpmWindowSize, playToEnd, cooldownEnabled, intervalsEnabled, intervalUpperHr, intervalLowerHr, intervalRunBpm, intervalWalkBpm, intervalRandomize, intervalVariance]);
 
   // Handle Mode Changes
   useEffect(() => {
@@ -80,7 +99,28 @@ export default function App() {
   useEffect(() => {
     let newTarget = 120;
 
-    if (isCooldown && cooldownStartBpm && cooldownStartTime) {
+    if (intervalsEnabled && mode === 'hr' && hr) {
+      if (intervalPhase === 'running' && hr >= intervalUpperHr) {
+        setIntervalPhase('walking');
+        let nextTarget = intervalWalkBpm;
+        if (intervalRandomize) nextTarget += Math.floor(Math.random() * (intervalVariance * 2 + 1)) - intervalVariance;
+        activeIntervalBpmRef.current = nextTarget;
+        newTarget = nextTarget;
+      } else if (intervalPhase === 'walking' && hr <= intervalLowerHr) {
+        setIntervalPhase('running');
+        let nextTarget = intervalRunBpm;
+        if (intervalRandomize) nextTarget += Math.floor(Math.random() * (intervalVariance * 2 + 1)) - intervalVariance;
+        activeIntervalBpmRef.current = nextTarget;
+        newTarget = nextTarget;
+      } else {
+        if (activeIntervalBpmRef.current === null) {
+           let base = intervalPhase === 'running' ? intervalRunBpm : intervalWalkBpm;
+           if (intervalRandomize) base += Math.floor(Math.random() * (intervalVariance * 2 + 1)) - intervalVariance;
+           activeIntervalBpmRef.current = base;
+        }
+        newTarget = activeIntervalBpmRef.current;
+      }
+    } else if (isCooldown && cooldownStartBpm && cooldownStartTime) {
       const elapsed = (Date.now() - cooldownStartTime) / 1000;
       if (elapsed >= cooldownDuration) {
         newTarget = Math.max(60, cooldownStartBpm * 0.7); // End of cooldown
@@ -96,25 +136,34 @@ export default function App() {
       if (mode === 'steps') newTarget = stepsBpm || fixedBpm;
     }
 
-    // Only update if difference is significant to avoid constant fetching
-    if (Math.abs(newTarget - targetBpm) > 5) {
+    // Only update if difference is significant to avoid constant fetching or if mode is fixed
+    if (Math.abs(newTarget - targetBpm) > 5 || mode === 'fixed' || (intervalsEnabled && newTarget !== targetBpm)) {
       setTargetBpm(newTarget);
     }
-  }, [mode, fixedBpm, hr, stepsBpm, isCooldown, cooldownStartBpm, cooldownStartTime, cooldownDuration, targetBpm]);
+  }, [mode, fixedBpm, hr, stepsBpm, isCooldown, cooldownStartBpm, cooldownStartTime, cooldownDuration, targetBpm, intervalsEnabled, intervalPhase, intervalUpperHr, intervalLowerHr, intervalRunBpm, intervalWalkBpm, intervalRandomize, intervalVariance]);
 
   // Check for Cooldown Trigger
   useEffect(() => {
-    if (cooldownEnabled && mode === 'hr' && hr && hr >= maxHrThreshold && !isCooldown) {
+    if (cooldownEnabled && mode === 'hr' && hr && hr >= maxHrThreshold && !isCooldown && !intervalsEnabled) {
       setIsCooldown(true);
       setCooldownStartBpm(hr);
       setCooldownStartTime(Date.now());
     }
-  }, [hr, maxHrThreshold, mode, isCooldown, cooldownEnabled]);
+  }, [hr, maxHrThreshold, mode, isCooldown, cooldownEnabled, intervalsEnabled]);
 
   // Smooth BPM over time window
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
+      
+      if (intervalsEnabled && mode === 'hr') {
+        if (appliedBpm !== targetBpm) {
+          setAppliedBpm(targetBpm);
+          bpmHistoryRef.current = [];
+        }
+        return;
+      }
+
       bpmHistoryRef.current.push({ time: now, bpm: targetBpm });
       
       const cutoff = now - (bpmWindowSize * 1000);
@@ -130,7 +179,7 @@ export default function App() {
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [targetBpm, bpmWindowSize, appliedBpm]);
+  }, [targetBpm, bpmWindowSize, appliedBpm, intervalsEnabled, mode]);
 
   // Fetch tracks when applied BPM changes significantly
   useEffect(() => {
@@ -376,9 +425,151 @@ export default function App() {
             >
               Настройки
             </button>
+            <button
+              onClick={() => setSettingsTab('intervals')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+                settingsTab === 'intervals' 
+                  ? 'bg-gray-700 text-white shadow-sm' 
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Интервалы
+            </button>
           </div>
           
           <div className="space-y-6 pb-8">
+            {settingsTab === 'intervals' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="flex items-center justify-between bg-gray-800 p-3 rounded-xl">
+                  <label className="text-sm font-medium text-white">
+                    Интервальный бег (по пульсу)
+                  </label>
+                  <input 
+                    type="checkbox" 
+                    checked={intervalsEnabled}
+                    onChange={(e) => setIntervalsEnabled(e.target.checked)}
+                    className="w-5 h-5 accent-blue-500"
+                  />
+                </div>
+
+                {intervalsEnabled && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-medium text-gray-300">Пульс для перехода на шаг</label>
+                        <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-red-400">{intervalUpperHr} BPM</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setIntervalUpperHr(Math.max(intervalLowerHr + 10, intervalUpperHr - 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                        <input 
+                          type="range" min="120" max="220" step="5"
+                          value={intervalUpperHr}
+                          onChange={(e) => setIntervalUpperHr(Math.max(intervalLowerHr + 10, Number(e.target.value)))}
+                          className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-red-500"
+                        />
+                        <button onClick={() => setIntervalUpperHr(Math.min(220, intervalUpperHr + 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-medium text-gray-300">Пульс для перехода на бег</label>
+                        <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-blue-400">{intervalLowerHr} BPM</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setIntervalLowerHr(Math.max(60, intervalLowerHr - 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                        <input 
+                          type="range" min="60" max="180" step="5"
+                          value={intervalLowerHr}
+                          onChange={(e) => setIntervalLowerHr(Math.min(intervalUpperHr - 10, Number(e.target.value)))}
+                          className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                        <button onClick={() => setIntervalLowerHr(Math.min(180, intervalLowerHr + 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                      </div>
+                    </div>
+
+                    <hr className="border-gray-800" />
+
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-medium text-gray-300">Целевой темп для бега</label>
+                        <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300">{intervalRunBpm} BPM</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setIntervalRunBpm(Math.max(130, intervalRunBpm - 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                        <input 
+                          type="range" min="130" max="220" step="5"
+                          value={intervalRunBpm}
+                          onChange={(e) => setIntervalRunBpm(Number(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-green-500"
+                        />
+                        <button onClick={() => setIntervalRunBpm(Math.min(220, intervalRunBpm + 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-medium text-gray-300">Целевой темп для шага</label>
+                        <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300">{intervalWalkBpm} BPM</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setIntervalWalkBpm(Math.max(60, intervalWalkBpm - 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                        <input 
+                          type="range" min="60" max="130" step="5"
+                          value={intervalWalkBpm}
+                          onChange={(e) => setIntervalWalkBpm(Number(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                        />
+                        <button onClick={() => setIntervalWalkBpm(Math.min(130, intervalWalkBpm + 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                      </div>
+                    </div>
+
+                    <hr className="border-gray-800" />
+
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between bg-gray-800/50 p-3 rounded-lg border border-gray-700/50">
+                        <label className="text-sm text-gray-300 cursor-pointer flex-1" htmlFor="randomize-toggle">
+                          Рандомный темп
+                        </label>
+                        <input 
+                          id="randomize-toggle"
+                          type="checkbox" 
+                          checked={intervalRandomize}
+                          onChange={(e) => setIntervalRandomize(e.target.checked)}
+                          className="w-5 h-5 accent-purple-500"
+                        />
+                      </div>
+                      
+                      {intervalRandomize && (
+                        <div className="animate-in fade-in slide-in-from-top-2">
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="text-sm text-gray-400">Диапазон разброса (±)</label>
+                            <span className="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-purple-400">
+                              ±{intervalVariance} BPM
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => setIntervalVariance(Math.max(0, intervalVariance - 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">-</button>
+                            <input 
+                              type="range" min="0" max="50" step="5"
+                              value={intervalVariance}
+                              onChange={(e) => setIntervalVariance(Number(e.target.value))}
+                              className="flex-1 h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                            />
+                            <button onClick={() => setIntervalVariance(Math.min(50, intervalVariance + 5))} className="w-8 h-8 shrink-0 rounded-full bg-gray-800 flex items-center justify-center text-gray-300 hover:bg-gray-700 transition-colors">+</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="bg-gray-900 p-4 rounded-xl text-sm text-gray-400">
+                  <p className="mb-2"><strong className="text-white">Как работают интервалы:</strong></p>
+                  <p className="leading-relaxed">Эта функция работает только в режиме "Пульс". Когда ваш пульс достигает верхнего порога, приложение меняет трек на спокойный для ходьбы. Как только вы восстановитесь и пульс упадет ниже нижнего порога, включится быстрый трек для бега.</p>
+                </div>
+              </div>
+            )}
+
             {settingsTab === 'library' && (
               <div className="space-y-6 animate-in fade-in duration-300">
                 <div>

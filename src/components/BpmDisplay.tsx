@@ -28,7 +28,7 @@ export function BpmDisplay({ mode, targetBpm, actualBpm, isCooldown, onChangeBpm
     const angle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
     lastAngleRef.current = angle;
     totalDeltaRef.current = 0;
-    startBpmRef.current = targetBpm;
+    startBpmRef.current = actualBpm || targetBpm;
     setIsDragging(true);
     
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -76,7 +76,7 @@ export function BpmDisplay({ mode, targetBpm, actualBpm, isCooldown, onChangeBpm
         <div className="flex-1 flex justify-center">
           {isInteractive ? (
             <button
-              onClick={(e) => { e.stopPropagation(); onChangeBpm?.(Math.max(60, targetBpm - 1)); }}
+              onClick={(e) => { e.stopPropagation(); onChangeBpm?.(Math.max(60, (actualBpm || targetBpm) - 1)); }}
               className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gray-800/30 backdrop-blur-md border border-gray-700/50 flex items-center justify-center text-2xl sm:text-3xl font-bold hover:bg-gray-700/50 text-gray-300 z-10 active:scale-95 transition-transform shadow-lg"
             >
               -
@@ -126,7 +126,7 @@ export function BpmDisplay({ mode, targetBpm, actualBpm, isCooldown, onChangeBpm
         <div className="flex-1 flex justify-center">
           {isInteractive ? (
             <button
-              onClick={(e) => { e.stopPropagation(); onChangeBpm?.(Math.min(200, targetBpm + 1)); }}
+              onClick={(e) => { e.stopPropagation(); onChangeBpm?.(Math.min(200, (actualBpm || targetBpm) + 1)); }}
               className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gray-800/30 backdrop-blur-md border border-gray-700/50 flex items-center justify-center text-2xl sm:text-3xl font-bold hover:bg-gray-700/50 text-gray-300 z-10 active:scale-95 transition-transform shadow-lg"
             >
               +

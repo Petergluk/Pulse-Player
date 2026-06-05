@@ -11,6 +11,16 @@ interface PlayerProps {
 
 export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: PlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const isPlayingRef = useRef(false);
+  const playIntentRef = useRef(false);
+  
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+    if (!isPlaying) {
+      playIntentRef.current = false;
+    }
+  }, [isPlaying]);
+
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -74,62 +84,75 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
     if (nextAudio) {
       nextAudio.src = currentTrack.audio;
       
-      // Prevent autoplay if user hasn't interacted yet to comply with browser policies
-      if (!hasInteracted.current) {
+      // Prevent autoplay if user hasn't interacted yet or if the player is explicitly paused
+      if (!hasInteracted.current || !playIntentRef.current) {
+        if (prevAudio) {
+          prevAudio.pause();
+          prevAudio.volume = 1;
+        }
+        if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
+        nextAudio.volume = 1;
         setActivePlayer(nextPlayer);
         setIsPlaying(false);
         return;
       }
 
       // If we are crossfading and currently playing, start next audio at volume 0
-      const shouldCrossfade = crossfadeDuration > 0 && isPlaying && prevAudio && !prevAudio.paused;
+      const shouldCrossfade = crossfadeDuration > 0 && isPlayingRef.current && prevAudio && !prevAudio.paused;
       nextAudio.volume = shouldCrossfade ? 0 : 1;
       
-      nextAudio.play().then(() => {
-        setIsPlaying(true);
-        setActivePlayer(nextPlayer);
-        
-        if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
-        
-        if (shouldCrossfade && prevAudio) {
-          const stepMs = 50;
-          const fadeAmount = stepMs / (crossfadeDuration * 1000);
+      const playPromise = nextAudio.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          if (!playIntentRef.current) {
+            nextAudio.pause();
+            return;
+          }
+          setIsPlaying(true);
+          setActivePlayer(nextPlayer);
           
-          fadeIntervalRef.current = setInterval(() => {
-            let done = false;
+          if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
+          
+          if (shouldCrossfade && prevAudio) {
+            const stepMs = 50;
+            const fadeAmount = stepMs / (crossfadeDuration * 1000);
             
-            // Fade out previous
-            if (prevAudio.volume - fadeAmount > 0) {
-              prevAudio.volume -= fadeAmount;
-            } else {
-              prevAudio.volume = 0;
-              prevAudio.pause();
-              done = true;
-            }
-            
-            // Fade in next
-            if (nextAudio.volume + fadeAmount < 1) {
-              nextAudio.volume += fadeAmount;
-            } else {
-              nextAudio.volume = 1;
-            }
-            
-            if (done) clearInterval(fadeIntervalRef.current);
-          }, stepMs);
-        } else if (prevAudio) {
-          prevAudio.pause();
-          prevAudio.volume = 1;
-        }
-      }).catch((e) => {
-        if (e.name === 'AbortError') {
-          // Play request was interrupted by a call to pause() or a new track load.
-          // This is expected during rapid track changes or play/pause toggles.
-          return;
-        }
-        console.error("Playback failed:", e);
-        setIsPlaying(false);
-        setActivePlayer(nextPlayer);
-      });
+            fadeIntervalRef.current = setInterval(() => {
+              if (!playIntentRef.current) {
+                clearInterval(fadeIntervalRef.current);
+                return;
+              }
+              let done = false;
+              
+              // Fade out previous
+              if (prevAudio.volume - fadeAmount > 0) {
+                prevAudio.volume -= fadeAmount;
+              } else {
+                prevAudio.volume = 0;
+                prevAudio.pause();
+                done = true;
+              }
+              
+              // Fade in next
+              if (nextAudio.volume + fadeAmount < 1) {
+                nextAudio.volume += fadeAmount;
+              } else {
+                nextAudio.volume = 1;
+              }
+              
+              if (done) clearInterval(fadeIntervalRef.current);
+            }, stepMs);
+          } else if (prevAudio) {
+            prevAudio.pause();
+            prevAudio.volume = 1;
+          }
+        }).catch((e) => {
+          if (e.name === 'AbortError') return;
+          console.error("Playback failed:", e);
+          setIsPlaying(false);
+          setActivePlayer(nextPlayer);
+        });
+      }
     }
   }, [currentTrack, crossfadeDuration]); // Intentionally omitting activePlayer/track1/track2 to avoid loops
 
@@ -172,19 +195,24 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
   const togglePlay = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     hasInteracted.current = true;
-    const activeAudio = activePlayer === 1 ? audio1Ref.current : audio2Ref.current;
-    if (!activeAudio || !currentTrack) return;
     
     if (isPlaying) {
-      activeAudio.pause();
+      playIntentRef.current = false;
+      if (audio1Ref.current) audio1Ref.current.pause();
+      if (audio2Ref.current) audio2Ref.current.pause();
+      if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
       setIsPlaying(false);
     } else {
+      const activeAudio = activePlayer === 1 ? audio1Ref.current : audio2Ref.current;
+      if (!activeAudio || !currentTrack) return;
+      playIntentRef.current = true;
       activeAudio.play().then(() => {
         setIsPlaying(true);
       }).catch(err => {
         if (err.name === 'AbortError') return;
         console.error("Manual playback failed:", err);
         setIsPlaying(false);
+        playIntentRef.current = false;
       });
     }
   };
@@ -246,7 +274,7 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
                     {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current ml-1" />}
                   </button>
                   <button 
-                    onClick={(e) => { e.stopPropagation(); onNextTrack(true); }}
+                    onClick={(e) => { e.stopPropagation(); playIntentRef.current = true; onNextTrack(true); }}
                     disabled={!currentTrack}
                     className="w-12 h-12 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-white rounded-full transition-transform active:scale-95"
                   >
@@ -369,7 +397,7 @@ export function Player({ currentTrack, onNextTrack, crossfadeDuration = 0 }: Pla
             </button>
             
             <button 
-              onClick={() => onNextTrack(true)}
+              onClick={() => { playIntentRef.current = true; onNextTrack(true); }}
               disabled={!currentTrack}
               className="p-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
             >
